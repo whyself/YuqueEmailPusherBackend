@@ -41,7 +41,7 @@ class YuqueEmailService {
     // console.log("update: ",d1,d2,(Math.abs(d1 - d2) > 0));
     const ftime = Boolean(Math.abs(d1 - d2) > 1000 * 60 * 60 * 1);
     const fword = Boolean(Math.abs(oldOne.wordCount - newOne.word_count) > 50);
-    return (ftime===true && fword===true);
+    return (ftime===true&&fword===true);
   }
   // 获取语雀知识库中特定作者的文档
   async getYuqueDocs() {
@@ -63,8 +63,8 @@ class YuqueEmailService {
          // 跳过分组节点
         // ...后续处理文档节点...
         // fs.appendFileSync('test.json', JSON.stringify(item, null, 2)+'\n', 'utf-8');
-        i++;
-        if(i>30) break;
+        // i++;
+        // if(i>30) break;
         let level=item.level+1;
         let fa=lv[level-1];
         lv[level]=item.slug;
@@ -198,7 +198,7 @@ class YuqueEmailService {
         let docs=[];
         const doc=await DocTree.findOne({slug:subscriber.docSlug});
         // console.log(doc.update);
-        if(doc&&!uniqueEmailsPush.has(subscriber.email+doc.slug)&&doc.update===true&&doc.slug!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || subscriber.author===doc.author)){
+        if(doc&&!uniqueEmailsPush.has(subscriber.email+doc.slug)&&doc.update===true&&doc.slug!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || childDoc.author===subscriber.author)){
             docs.push({
               title: doc.title,
               author: doc.author,

@@ -50,7 +50,7 @@ async function startServer() {
     // 启动 Web 服务，监听端口（默认 3000，可在 .env 或 config.js 配置）
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-      console.log(`服务器运行在 http://localhost:${PORT}`);
+      console.log(`服务器运行在 http://0.0.0.0:${PORT}`);
     });
   } catch (error) {
     // 启动失败时输出错误

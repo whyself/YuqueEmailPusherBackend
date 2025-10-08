@@ -12,6 +12,7 @@ require('dotenv').config();
 router.post('/subscribe', async (req, res) => {
   const { email ,docSlug=process.env.KNOWLEDGE_BASE_ID, single, author} = req.body;
   const result = await services.subscribe(email, docSlug, single, author); // 调用订阅方法
+  console.log(result);
   res.json(result); // 返回结果
 });
 
@@ -19,18 +20,20 @@ router.post('/subscribe', async (req, res) => {
 router.post('/unsubscribe', async (req, res) => {
   const { email ,docSlug, single, author} = req.body;
   const result = await services.unsubscribe(email, docSlug, single, author); // 调用取消订阅方法
+  console.log(result);
   res.json(result);
 });
 
 router.post('/unsubscribeAll', async (req, res) => {
   const { email } = req.body;
   const result = await services.unsubscribeAll(email); // 调用取消订阅方法
+  console.log(result);
   res.json(result);
 });
 
 // 手动触发推送接口：管理员可手动执行一次推送任务
 router.post('/push/manual', async (req, res) => {
-  await services.manualPush(); // 调用手动推送方法
+  services.manualPush(); // 调用手动推送方法
   res.json({ message: '手动推送任务已触发' });
 });
 
@@ -44,6 +47,8 @@ router.get('/subscriptions', async (req, res) => {
   } else {
     subscriptions = await Subscription.find();
   }
+  console.log(`查询订阅列表，数量：${subscriptions.length}`);
+  console.log(subscriptions);
   res.json(subscriptions);
 });
 
