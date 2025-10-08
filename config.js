@@ -29,6 +29,6 @@ module.exports = {
   
   // 定时任务配置（如每周一8点自动推送）
   cron: {
-    schedule: process.env.CRON_SCHEDULE || '0 8 * * 1'
+    schedule: process.env.CRON_SCHEDULE
   }
 };

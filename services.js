@@ -32,11 +32,16 @@ class YuqueEmailService {
       }
     });
   }
-  async compareDate(date1,date2){
+  async compare(oldOne,newOne){
+    const date1 = new Date(oldOne.publishedAt);
+    const date2 = new Date(newOne.published_at);
+    // console.log(date1,date2);
     const d1 = date1.getTime();
     const d2 = date2.getTime();
     // console.log("update: ",d1,d2,(Math.abs(d1 - d2) > 0));
-    return Boolean(Math.abs(d1 - d2) > 1000 * 60 * 60 * 1);
+    const ftime = Boolean(Math.abs(d1 - d2) > 1000 * 60 * 60 * 1);
+    const fword = Boolean(Math.abs(oldOne.wordCount - newOne.word_count) > 50);
+    return (ftime===true && fword===true);
   }
   // 获取语雀知识库中特定作者的文档
   async getYuqueDocs() {
@@ -58,8 +63,8 @@ class YuqueEmailService {
          // 跳过分组节点
         // ...后续处理文档节点...
         // fs.appendFileSync('test.json', JSON.stringify(item, null, 2)+'\n', 'utf-8');
-        // i++;
-        // if(i>30) break;
+        i++;
+        if(i>30) break;
         let level=item.level+1;
         let fa=lv[level-1];
         lv[level]=item.slug;
@@ -95,12 +100,13 @@ class YuqueEmailService {
               url: url,
               publishedAt: docContent.published_at,
               description: docContent.description,
+              wordCount: docContent.word_count,
               update: true,
               children: [],
               author: docContent.user.name
             });
             await newNode.save();
-          } else if (await this.compareDate(new Date(docContent.published_at), new Date(doc.publishedAt))) {
+          } else if (await this.compare(doc,docContent)) {
           console.log(Date(docContent.published_at), Date(doc.publishedAt));
             await DocTree.findOneAndUpdate(
               { slug: item.slug },
@@ -111,6 +117,7 @@ class YuqueEmailService {
                 url: url,
                 publishedAt: docContent.published_at,
                 description: docContent.description,
+                wordCount: docContent.word_count,
                 update: true,
                 children: [],
                 author: docContent.user.name
@@ -154,7 +161,7 @@ class YuqueEmailService {
     const docList = docs.map(doc => `
       <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
         <h3>${doc.title}</h3>
-        <p>作者: ${doc.author} | 更新: ${new Date(doc.updatedAt).toLocaleDateString()}</p>
+        <p>作者: ${doc.author} | 更新: ${new Date(doc.updatedAt).toLocaleString('zh-CN', { hour12: false })}</p>
         <p>${doc.description || ''}</p>
         <a href="${doc.url}">阅读文档</a>
       </div>
@@ -185,12 +192,13 @@ class YuqueEmailService {
       // 3. 逐个发送邮件
       let successCount = 0;
       let failCount = 0;
+      let uniqueEmailsPush = new Set();
       for (const subscriber of subscribers) {
         if(!subscriber.isActive) continue;
         let docs=[];
         const doc=await DocTree.findOne({slug:subscriber.docSlug});
         // console.log(doc.update);
-        if(doc&&doc.update===true&&doc.slug!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || subscriber.author===doc.author)){
+        if(doc&&!uniqueEmailsPush.has(subscriber.email+doc.slug)&&doc.update===true&&doc.slug!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || subscriber.author===doc.author)){
             docs.push({
               title: doc.title,
               author: doc.author,
@@ -198,6 +206,7 @@ class YuqueEmailService {
               updatedAt: doc.publishedAt,
               description: doc.description
             });
+            uniqueEmailsPush.add(subscriber.email+doc.slug);
         } 
         if (!subscriber.single){
           let docList=[];
@@ -205,7 +214,7 @@ class YuqueEmailService {
             while(docList.length>0){
               const childSlug=docList.shift();
               const childDoc=await DocTree.findOne({slug:childSlug});
-              if(childDoc&&childDoc.update===true&&(subscriber.author==='' || childDoc.author===subscriber.author)){
+              if(childDoc&&!uniqueEmailsPush.has(subscriber.email+childDoc.slug)&&childDoc.update===true&&(subscriber.author==='' || childDoc.author===subscriber.author)){
                 // console.log(childDoc.update);
                 docs.push({
                   title: childDoc.title,
@@ -214,6 +223,7 @@ class YuqueEmailService {
                   updatedAt: childDoc.publishedAt,
                   description: childDoc.description
                 });
+                uniqueEmailsPush.add(subscriber.email+childDoc.slug);
               }
               if (childDoc && childDoc.children.length > 0) {
                 docList.push(...childDoc.children);
@@ -265,7 +275,7 @@ class YuqueEmailService {
       if (existing) {
         existing.isActive = true;
         await existing.save();
-        return { success: false, message: '该邮箱已保持活跃状态，single = ' + single };
+        return { success: false, message: '该订阅已保持活跃状态' };
       }
       await Subscription.create({ email ,docSlug, single, author});
       return { success: true, message: '订阅成功' };

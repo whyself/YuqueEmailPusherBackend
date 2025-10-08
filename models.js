@@ -25,6 +25,7 @@ const docTreeSchema = new mongoose.Schema({
   url: { type: String, default: '' },
   publishedAt: { type: String, default: '' },
   description: { type: String, default: '' },
+  wordCount: { type: Number, default: 0 },
   update: { type: Boolean, default: false },
   children: { type: [String], default: [] },
   author: { type: String, default: '' }
