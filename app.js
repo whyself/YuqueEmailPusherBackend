@@ -5,7 +5,15 @@ const mongoose = require('mongoose');
 const {DocTree} = require('./models');
 require('dotenv').config();
 
+
+const cors = require('cors');
 const app = express(); // 创建 express 应用实例
+
+// 允许前端端口跨域访问
+app.use(cors({
+  origin: ['http://10.6.1.104:8080', 'http://localhost:8080','http://26.116.77.54:8088'],
+  credentials: true
+}));
 
 // 2. 设置中间件（解析 JSON 请求体）
 app.use(express.json());
@@ -33,13 +41,14 @@ async function startServer() {
       const rootNode = new DocTree({
         title: 'Root',
         type: 'Root',
-        slug: process.env.KNOWLEDGE_BASE_ID,
+        slug: 'Root',
+        uuid: 'Root',
         update: false,
         children: []
       });
       await rootNode.save();
     }
-    await DocTree.updateMany({}, { $set: { children: [] ,update:false} });
+    // await DocTree.updateMany({}, { $set: { children: [] ,update:false} });
   // 启动定时任务（定时自动推送语雀消息，逻辑在 services.js）
   const services = require('./services');
   // 启动后立即推送一次

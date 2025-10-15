@@ -10,7 +10,9 @@ const nodemailer = require('nodemailer'); // 用于发送邮件
 const cron = require('node-cron'); // 用于定时任务
 const config = require('./config'); // 加载配置
 const fs = require('fs');
-const { Subscription, PushHistory ,DocTree} = require('./models'); // 加载数据模型
+const { Subscription, PushHistory ,DocTree, User } = require('./models'); // 加载数据模型
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 class YuqueEmailService {
@@ -31,7 +33,13 @@ class YuqueEmailService {
         pass: config.email.password
       }
     });
+    this.jwtSecret = process.env.JWT_SECRET || 'default_jwt_secret';
   }
+
+  
+
+  // 用户注册和登录方法已迁移到 userService.js
+  // 请通过 userService.registerUser 和 userService.loginUser 调用
   async compare(oldOne,newOne){
     const date1 = new Date(oldOne.publishedAt);
     const date2 = new Date(newOne.published_at);
@@ -41,11 +49,13 @@ class YuqueEmailService {
     // console.log("update: ",d1,d2,(Math.abs(d1 - d2) > 0));
     const ftime = Boolean(Math.abs(d1 - d2) > 1000 * 60 * 60 * 1);
     const fword = Boolean(Math.abs(oldOne.wordCount - newOne.word_count) > 50);
-    return (ftime===true&&fword===true);
+    return (ftime===true &&fword===true);
   }
   // 获取语雀知识库中特定作者的文档
   async getYuqueDocs() {
     try {
+      memberList = [];
+      await this.getAllMember();
       // 获取知识库目录（toc）
       //console.log(config.yuque.baseURL+`/repos/${config.yuque.baseSlug}/toc`)
       const tocResponse = await this.yuqueClient.get(
@@ -57,6 +67,25 @@ class YuqueEmailService {
       if(!tocResponse.data.data || tocResponse.data.data.length === 0) {
         throw new Error('知识库目录为空');
       }
+      console.log('初始化知识库数据');
+      if(await DocTree.countDocuments({uuid:process.env.KNOWLEDGE_BASE_ID})===0){
+      const newNode = new DocTree({
+        title: '社团活动',
+        type: 'KNOWLEDGE_BASE',
+        slug: process.env.KNOWLEDGE_BASE_ID,
+        uuid: process.env.KNOWLEDGE_BASE_ID,
+        update: false,
+        children: []
+      });
+      await newNode.save();
+      }
+      const rootDoc = await DocTree.findOne({uuid:'Root'});
+      if(!rootDoc.children.includes(process.env.KNOWLEDGE_BASE_ID)){
+        await DocTree.findOneAndUpdate(
+      { uuid: 'Root' },
+      { $push: { children: process.env.KNOWLEDGE_BASE_ID } }
+      );
+      }
       let lv=[process.env.KNOWLEDGE_BASE_ID,null,null,null,null,null,null,null,null];//console.log(config.yuque.baseURL+`/repos/${config.yuque.baseSlug}/toc`);
       let i=1;
       for (const item of tocResponse.data.data) {
@@ -67,20 +96,33 @@ class YuqueEmailService {
         // if(i>30) break;
         let level=item.level+1;
         let fa=lv[level-1];
-        lv[level]=item.slug;
+        lv[level]=item.uuid;
         // console.log(lv);
-        while(String(fa)==='#') level--,fa=lv[level-1];
-        if(item.slug.startsWith('#')) continue;
+        // while(String(fa)==='#') level--,fa=lv[level-1];
+        // if(item.slug.startsWith('#')) continue;
         // console.log(fa);
-        const parentDoc = await DocTree.findOne({slug:fa});
-        if(!parentDoc.children.includes(item.slug)){
+        const parentDoc = await DocTree.findOne({uuid:fa});
+        if(!parentDoc.children.includes(item.uuid)){
           await DocTree.findOneAndUpdate(
-        { slug: fa },
-        { $push: { children: item.slug } }
+        { uuid: fa },
+        { $push: { children: item.uuid } }
         );
         }
+
+        let cur= await DocTree.findOne({uuid:item.uuid});
+        // if(cur) console.log(cur.publishedAt);
+        if(cur&&cur.publishedAt!==null&&Date.now()-new Date(cur.publishedAt).getTime()>1000*60*60*24*14)
+        {
+          console.log(cur.title + '文档超过两周未更新，跳过');
+          continue;
+        }
+        
+        let docContent={};
+        let title=(Boolean)(String(item.slug)!=="#");
+        let url='';
+        if (title) {
         console.log(item.title);
-        let url=`https://nova.yuque.com/${config.yuque.teamBaseId}`;
+        url=`https://nova.yuque.com/${config.yuque.teamBaseId}`;
         url+='/'+item.slug;
         const docResponse = await this.yuqueClient.get(
           `/repos/${config.yuque.baseSlug}/docs/${item.slug}`
@@ -88,47 +130,67 @@ class YuqueEmailService {
         if(docResponse.status !== 200) {
           throw new Error('无法获取文档内容');
         }
-        let docContent = docResponse.data.data;
+        docContent = docResponse.data.data;
+        }
         // fs.createWriteStream(`./test.json`).write(JSON.stringify(docContent, null, 2)),f=false;
-        if(await DocTree.findOne({slug:item.slug}).then(async doc=>{
+        if(await DocTree.findOne({uuid:item.uuid}).then(async doc=>{
           if(!doc) {
             // 新建节点
             const newNode = new DocTree({
               title: item.title,
               type: item.type,
               slug: item.slug,
+              uuid: item.uuid,
+              level: item.level+1,
+              parentUuid: fa,
               url: url,
-              publishedAt: docContent.published_at,
-              description: docContent.description,
-              wordCount: docContent.word_count,
+              publishedAt:  title ? docContent.published_at : null,
+              description: title ? docContent.description : null,
+              wordCount: title ? docContent.word_count : null,
               update: true,
               children: [],
-              author: docContent.user.name
+              author: title ? docContent.user.name : null
             });
             await newNode.save();
           } else if (await this.compare(doc,docContent)) {
           console.log(Date(docContent.published_at), Date(doc.publishedAt));
             await DocTree.findOneAndUpdate(
-              { slug: item.slug },
+              { uuid: item.uuid },
               {
                 title: item.title,
                 type: item.type,
                 slug: item.slug,
+                uuid: item.uuid,
+                level: item.level+1,
+                parentUuid: fa,
                 url: url,
-                publishedAt: docContent.published_at,
-                description: docContent.description,
-                wordCount: docContent.word_count,
+                publishedAt: title ? docContent.published_at : null,
+                description: title ? docContent.description : null,
+                wordCount: title ? docContent.word_count : null,
                 update: true,
                 children: [],
-                author: docContent.user.name
+                author: title ? docContent.user.name : null
               }
             );
           } else {
             // 只更新 update 字段
-            console.log('文档无更新');
+            if(title) console.log('文档无更新');
+            else console.log('分组节点，无需更新');
             await DocTree.findOneAndUpdate(
-              { slug: item.slug },
-              { update: false }
+              { uuid: item.uuid },
+              {
+                title: item.title,
+                type: item.type,
+                slug: item.slug,
+                uuid: item.uuid,
+                level: item.level+1,
+                parentUuid: fa,
+                url: url,
+                description: title ? docContent.description : null,
+                update: false,
+                children: [],
+                author: title ? docContent.user.name : null
+              }
             );
           }
         }));
@@ -174,14 +236,27 @@ class YuqueEmailService {
       <p><small>自动发送，请勿回复</small></p>
     `;
   }
-
+  async getSize(uuid){
+    const doc = await DocTree.findOne({ uuid });
+    let size=0;
+    for (const childUuid of doc.children) {
+      size += await this.getSize(childUuid);
+    }
+    await DocTree.findOneAndUpdate(
+      { uuid: uuid },
+      { size: size }
+      );
+    return size+(Number)(doc.type==='DOC');
+  }
   // 执行推送任务（获取文档、发送邮件、记录历史）
   async runPushTask() {
     console.log('开始执行推送任务...');
     try {
       // 1. 获取目标文档
-      
+      await DocTree.updateMany({}, { $set: { children: [] ,update:false,size:0} });
       await this.getYuqueDocs();
+      await this.getSize(process.env.KNOWLEDGE_BASE_ID);
+      console.log('文档获取和更新完成');
       // 2. 获取所有活跃订阅者
       const subscribers = await Subscription.find({ isActive: true });
       if (subscribers.length === 0) {
@@ -196,9 +271,9 @@ class YuqueEmailService {
       for (const subscriber of subscribers) {
         if(!subscriber.isActive) continue;
         let docs=[];
-        const doc=await DocTree.findOne({slug:subscriber.docSlug});
+        const doc=await DocTree.findOne({uuid:subscriber.docUuid});
         // console.log(doc.update);
-        if(doc&&!uniqueEmailsPush.has(subscriber.email+doc.slug)&&doc.update===true&&doc.slug!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || childDoc.author===subscriber.author)){
+        if(doc&&!uniqueEmailsPush.has(subscriber.email+doc.uuid)&&doc.update===true&&doc.uuid!==process.env.KNOWLEDGE_BASE_ID&&(subscriber.author==='' || childDoc.author===subscriber.author)){
             docs.push({
               title: doc.title,
               author: doc.author,
@@ -212,9 +287,9 @@ class YuqueEmailService {
           let docList=[];
             docList.push(...doc.children);
             while(docList.length>0){
-              const childSlug=docList.shift();
-              const childDoc=await DocTree.findOne({slug:childSlug});
-              if(childDoc&&!uniqueEmailsPush.has(subscriber.email+childDoc.slug)&&childDoc.update===true&&(subscriber.author==='' || childDoc.author===subscriber.author)){
+              const childUuid=docList.shift();
+              const childDoc=await DocTree.findOne({uuid:childUuid});
+              if(childDoc&&!uniqueEmailsPush.has(subscriber.email+childDoc.uuid)&&childDoc.update===true&&(subscriber.author==='' || childDoc.author===subscriber.author)){
                 // console.log(childDoc.update);
                 docs.push({
                   title: childDoc.title,
@@ -223,7 +298,7 @@ class YuqueEmailService {
                   updatedAt: childDoc.publishedAt,
                   description: childDoc.description
                 });
-                uniqueEmailsPush.add(subscriber.email+childDoc.slug);
+                uniqueEmailsPush.add(subscriber.email+childDoc.uuid);
               }
               if (childDoc && childDoc.children.length > 0) {
                 docList.push(...childDoc.children);
@@ -256,7 +331,6 @@ class YuqueEmailService {
 
   // 启动定时任务（定时自动执行推送）
   async startCronJob() {
-    await DocTree.updateMany({}, { $set: { children: [] ,update:false} });
     cron.schedule(config.cron.schedule, () => {
       this.runPushTask();
     });
@@ -269,15 +343,15 @@ class YuqueEmailService {
   }
 
   // 订阅邮箱
-  async subscribe(email, docSlug, single, author) {
+  async subscribe(email, title, docUuid, single, author) {
     try {
-      const existing = await Subscription.findOne({ email ,docSlug, single, author});
+      const existing = await Subscription.findOne({ email ,title, docUuid, single, author});
       if (existing) {
         existing.isActive = true;
         await existing.save();
         return { success: false, message: '该订阅已保持活跃状态' };
       }
-      await Subscription.create({ email ,docSlug, single, author});
+      await Subscription.create({ email ,title, docUuid, single, author});
       return { success: true, message: '订阅成功' };
     } catch (error) {
       return { success: false, message: '订阅失败: ' + error.message };
@@ -285,10 +359,10 @@ class YuqueEmailService {
   }
 
   // 取消订阅
-  async unsubscribe(email, docSlug, single, author) {
+  async unsubscribe(email, title, docUuid, single, author) {
     try {
       const result = await Subscription.findOneAndUpdate(
-        { email ,docSlug, single, author},
+        { email ,title, docUuid, single, author},
         { isActive: false }
       );
       if (!result) {
